@@ -121,8 +121,8 @@ async def chat(request: Request, chat_req: ChatRequest):
             error_detail = "ERROR: Rate Limit Reached\n\nThe LLM API rate limit has been exceeded. Please wait a moment and try again.\n\nGroq free tier limits:\n• 30 requests per minute\n• 7,000 requests per day"
         elif "ImportError" in error_type or "ModuleNotFoundError" in error_type:
             error_detail = f"Import error: {error_detail}. Check that all dependencies are installed."
-        elif "Ollama" in error_detail or "connection" in error_detail.lower() or "ConnectionError" in error_type:
-            error_detail = f"{error_detail}. Make sure Ollama is running: `ollama serve`"
+        elif "connection" in error_detail.lower() or "ConnectionError" in error_type:
+            error_detail = f"{error_detail}. Check your LLM provider/API connectivity and configuration."
         elif "FileNotFoundError" in error_type or "path" in error_detail.lower():
             error_detail = f"File/path error: {error_detail}. Check data files and chart output directory."
         

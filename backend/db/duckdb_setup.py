@@ -75,6 +75,14 @@ def init_duckdb():
         CREATE OR REPLACE VIEW fhv_with_company AS
         SELECT 
             f.*,
+            (
+                COALESCE(f.base_passenger_fare, 0)
+                + COALESCE(f.tolls, 0)
+                + COALESCE(f.tips, 0)
+                + COALESCE(f.sales_tax, 0)
+                + COALESCE(f.congestion_surcharge, 0)
+                + COALESCE(f.airport_fee, 0)
+            ) AS total_price,
             COALESCE(h.company_name, 'Unknown') AS company,
             b.base_name
         FROM fhv_with_zones f

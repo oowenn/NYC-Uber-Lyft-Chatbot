@@ -60,7 +60,8 @@ DATA COVERAGE:
 Available views:
 - fhv_with_company: Main view with trip data joined with company info
   Columns: pickup_datetime, dropoff_datetime, PULocationID, DOLocationID, 
-           trip_miles, trip_time, base_passenger_fare, company, pickup_zone, 
+           trip_miles, trip_time, base_passenger_fare, tolls, tips, sales_tax,
+           congestion_surcharge, airport_fee, total_price, company, pickup_zone,
            pickup_borough, dropoff_zone, dropoff_borough
 
 Rules:

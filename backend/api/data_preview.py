@@ -31,6 +31,7 @@ async def get_data_preview(request: Request):
             airport_fee,
             tips,
             driver_pay,
+            total_price,
             PULocationID,
             DOLocationID
         FROM fhv_with_company

@@ -64,7 +64,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
             print(f"Max attempts: {max_sql_attempts}")
             print(f"{'='*80}\n")
             return {
-                "answer": "Sorry, I couldn't generate a valid SQL query for your question. Please try rephrasing it. (Make sure Ollama is running with the model pulled)",
+                "answer": "Sorry, I couldn't generate a valid SQL query for your question. Please try rephrasing it.",
                 "sql": None,
                 "data": None,
                 "data_preview": None,
@@ -73,7 +73,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
             }
     except ConnectionError as e:
         return {
-            "answer": f"❌ Cannot connect to Ollama: {str(e)}\n\nTo fix:\n1. Start Ollama: `ollama serve`\n2. Pull the model: `ollama pull {model}`\n3. Check the health endpoint: `/api/health`",
+            "answer": f"❌ Cannot connect to the configured LLM provider: {str(e)}\n\nTo fix:\n1. Verify your API key and provider settings in .env\n2. Confirm network connectivity\n3. Check the health endpoint: `/api/health`",
             "sql": None,
             "data": None,
             "data_preview": None,
@@ -82,7 +82,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
         }
     except TimeoutError as e:
         return {
-            "answer": f"⏱️ {str(e)}\n\nThe model might be too slow. Try:\n1. Check Ollama is running: `ollama serve`\n2. Use a faster model or increase timeout",
+            "answer": f"⏱️ {str(e)}\n\nThe model may be too slow. Try:\n1. Increase `LLM_TIMEOUT`\n2. Use a faster model\n3. Retry the request",
             "sql": None,
             "data": None,
             "data_preview": None,
@@ -119,7 +119,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
         # Check if it's a connection error
         if "connection" in error_msg.lower() or "refused" in error_msg.lower() or "connect" in error_msg.lower():
             return {
-                "answer": f"❌ Unable to connect to Ollama: {error_msg}\n\nTo fix:\n1. Start Ollama: `ollama serve`\n2. Pull the model: `ollama pull {model}`\n3. Check: `curl http://127.0.0.1:11434/api/tags`",
+                "answer": f"❌ Unable to connect to the configured LLM provider: {error_msg}\n\nTo fix:\n1. Verify provider credentials and base URL in `.env`\n2. Confirm internet/network access\n3. Retry the request",
                 "sql": None,
                 "data": None,
                 "data_preview": None,
@@ -127,7 +127,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
                 "mode": "error"
             }
         return {
-            "answer": f"Error generating SQL: {error_msg}\n\nCheck:\n1. Ollama is running: `ollama serve`\n2. Model is available: `ollama list`\n3. Health check: `/api/health`",
+            "answer": f"Error generating SQL: {error_msg}\n\nCheck:\n1. LLM provider settings and API key in `.env`\n2. Model name and availability\n3. Health check: `/api/health`",
             "sql": None,
             "data": None,
             "data_preview": None,
@@ -227,8 +227,13 @@ Return ONLY valid JSON, no extra text or code fences.
                     "chart": None,
                     "mode": "error"
                 }
-            # Re-raise other RuntimeErrors
-            raise
+            # For non-rate-limit runtime errors (e.g., empty/incomplete model output),
+            # retry chart-spec generation and gracefully fall back to data-only response.
+            if attempt == max_spec_attempts:
+                break
+            last_error = f"LLM call failed: {error_msg}"
+            last_spec_attempt = {"spec": chart_spec, "error": last_error}
+            continue
         except Exception as e:
             print(f"LLM call failed: {e}")
             error_msg = str(e)

@@ -12,7 +12,9 @@ FHV_COLUMNS = {
     "pickup_datetime", "dropoff_datetime", "company", "hvfhs_license_num",
     "trip_miles", "trip_time", "PULocationID", "DOLocationID",
     "pickup_borough", "pickup_zone", "dropoff_borough", "dropoff_zone",
-    "base_name", "originating_base_num", "dispatching_base_num",
+    "base_name", "base_passenger_fare", "tolls", "tips", "sales_tax",
+    "congestion_surcharge", "airport_fee", "driver_pay", "total_price",
+    "originating_base_num", "dispatching_base_num",
     "request_datetime", "on_scene_datetime"
 }
 
@@ -77,7 +79,9 @@ def validate_sql(sql: str, conn: Optional[duckdb.DuckDBPyConnection] = None) -> 
                 
                 # Check if any columns in SELECT/GROUP BY don't exist
                 # This is a heuristic - we check if common invalid columns appear
-                invalid_columns = {"start_time", "end_time", "timestamp", "date"}  # Common mistakes
+                # Keep this heuristic narrow to avoid false positives on SQL type/date literals
+                # like TIMESTAMP '2023-01-01' or DATE '2023-01-01'.
+                invalid_columns = {"start_time", "end_time"}  # Common mistaken column names
                 sql_lower = sql.lower()
                 for invalid_col in invalid_columns:
                     if invalid_col in sql_lower and invalid_col not in {col.lower() for col in result_columns}:
@@ -200,7 +204,8 @@ CRITICAL: GROUP BY error detected. Fix this by:
 - When using window functions (OVER()), they can be used alongside GROUP BY in the same SELECT
 """
     
-    if any("percentage" in e.lower() or "percent" in e.lower() for e in errors) or any("percentage" in sql.lower() or "percent" in sql.lower() for sql in [sql]):
+    sql_text = (sql or "").lower()
+    if any("percentage" in e.lower() or "percent" in e.lower() for e in errors) or ("percentage" in sql_text or "percent" in sql_text):
         if "GROUP BY" in specific_guidance:
             # Already covered
             pass
@@ -224,7 +229,11 @@ However, validation/execution found these errors:
 {previous_context}
 Please correct the SQL query. Remember:
 - Use view fhv_with_company
-- Available columns: pickup_datetime (default time field), dropoff_datetime, company, hvfhs_license_num, trip_miles, trip_time, PULocationID, DOLocationID, pickup_borough, pickup_zone, dropoff_borough, dropoff_zone, base_name, base_passenger_fare, tolls, sales_tax, congestion_surcharge, airport_fee, tips, driver_pay
+- Column groups:
+  * Time columns: pickup_datetime (default), dropoff_datetime, request_datetime, on_scene_datetime
+  * Price columns: total_price, base_passenger_fare, tolls, sales_tax, congestion_surcharge, airport_fee, tips, bcf, driver_pay
+  * Location columns: PULocationID, DOLocationID, pickup_zone, pickup_borough, dropoff_zone, dropoff_borough
+  * Trip/entity columns: trip_miles, trip_time, company, hvfhs_license_num, base_name, dispatching_base_num, originating_base_num
 - Use pickup_datetime for time filters unless the question explicitly asks for another column
 - Include a time filter within 2023-01-01..2023-03-31
 - For time-based aggregations, use DATE_TRUNC('month', pickup_datetime) AS month (or 'day', 'hour') to create a proper date column instead of extracting year and month separately

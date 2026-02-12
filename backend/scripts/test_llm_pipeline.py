@@ -66,7 +66,13 @@ You are a SQL planner for NYC FHVHV data.
 User question: {question}
 Rules:
 - Use view fhv_with_company.
-- Available columns: pickup_datetime (default time field), dropoff_datetime, company, hvfhs_license_num, trip_miles, trip_time, PULocationID, DOLocationID, pickup_borough, pickup_zone, dropoff_borough, dropoff_zone, base_name, base_passenger_fare, tolls, bcf, sales_tax, congestion_surcharge, airport_fee, tips, driver_pay, request_datetime, on_scene_datetime, dispatching_base_num, originating_base_num, shared_request_flag, shared_match_flag, access_a_ride_flag, wav_request_flag, wav_match_flag.
+- Column groups:
+  * Time columns: pickup_datetime (default), dropoff_datetime, request_datetime, on_scene_datetime
+  * Price columns: total_price, base_passenger_fare, tolls, sales_tax, congestion_surcharge, airport_fee, tips, bcf, driver_pay
+  * Location columns: PULocationID, DOLocationID, pickup_zone, pickup_borough, dropoff_zone, dropoff_borough
+  * Trip/entity columns: trip_miles, trip_time, company, hvfhs_license_num, base_name, dispatching_base_num, originating_base_num
+  * Flags: shared_request_flag, shared_match_flag, access_a_ride_flag, wav_request_flag, wav_match_flag
+- If asked for "most expensive", "costliest", or "highest fare", rank by total_price DESC (fallback base_passenger_fare DESC if needed) and return top row(s).
 - Include a time filter within 2023-01-01..2023-03-31; if none specified, default to 2023-01-01..2023-01-03.
 - Use pickup_datetime for time filters unless the question explicitly asks for another column.
 - For time-based aggregations (grouping by time periods), create a proper date column:
@@ -314,7 +320,7 @@ async def call_ollama(prompt: str, model: str, timeout: float) -> str:
                 # Preferred field in Responses API
                 text = data.get("output_text")
                 if isinstance(text, str) and text.strip():
-                    return text
+                    return text.strip()
 
                 # Fallback: extract text chunks from output array
                 chunks = []
@@ -326,7 +332,22 @@ async def call_ollama(prompt: str, model: str, timeout: float) -> str:
                                 value = part.get("text")
                                 if isinstance(value, str) and value:
                                     chunks.append(value)
-                return "\n".join(chunks).strip()
+                merged = "\n".join(chunks).strip()
+                if merged:
+                    return merged
+
+                # Optional debug trace to inspect response shape without dumping full payload by default
+                if os.getenv("LLM_DEBUG_RESPONSES", "false").lower() == "true":
+                    output_types = [item.get("type") for item in data.get("output", [])]
+                    print(
+                        f"[OPENAI DEBUG] empty output for model={openai_model}, "
+                        f"status={data.get('status')}, output_types={output_types}, "
+                        f"finish_reason={data.get('finish_reason')}, usage={data.get('usage')}"
+                    )
+
+                raise RuntimeError(
+                    f"OpenAI returned empty output (model={openai_model}, status={data.get('status')})"
+                )
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
                     raise RuntimeError("OpenAI rate limit exceeded. Please wait and retry.") from e
@@ -415,6 +436,15 @@ async def generate_sql_with_validation(question: str, model: str, timeout: float
             sql = sql_raw.strip()
             sql = sql.replace("```sql", "").replace("```", "")
             sql = sql.replace("Here is the answer:", "").replace("Here is the response:", "").strip()
+
+            if not sql:
+                errors = ["LLM returned empty response text"]
+                last_attempt = {"sql": "", "errors": errors}
+                if verbose:
+                    print("❌ LLM returned empty response text")
+                if attempt == max_attempts:
+                    return None
+                continue
             
             if verbose:
                 print(f"\n[SQL GENERATED]")

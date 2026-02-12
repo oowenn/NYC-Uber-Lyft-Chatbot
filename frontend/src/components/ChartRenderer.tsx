@@ -64,23 +64,26 @@ export default function ChartRenderer({ config, data }: ChartRendererProps) {
   
   // Generate consistent colors for series
   const colors = [
-    '#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#8dd1e1',
-    '#d084d0', '#ffb347', '#87ceeb', '#da70d6', '#98d8c8'
+    '#58a6ff', '#3fb950', '#d29922', '#f78166', '#bc8cff',
+    '#79c0ff', '#56d364', '#e3b341', '#ffa198', '#d2a8ff'
   ]
+
+  const axisStyle = { fill: '#8b949e', fontSize: 12 }
+  const gridColor = '#21262d'
 
   if (config.type === 'line') {
     return (
       <div className="chart-container">
         {config.title && <h4 className="chart-title">{config.title}</h4>}
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey={config.x} />
-            <YAxis />
-            <Tooltip />
+            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+            <XAxis dataKey={config.x} tick={axisStyle} stroke={gridColor} />
+            <YAxis tick={axisStyle} stroke={gridColor} />
+            <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3' }} />
             {config.series ? (
               <>
-                <Legend />
+                <Legend wrapperStyle={{ color: '#8b949e', fontSize: 12 }} />
                 {seriesValues.map((series, idx) => (
                   <Line
                     key={series}
@@ -88,11 +91,13 @@ export default function ChartRenderer({ config, data }: ChartRendererProps) {
                     dataKey={series}
                     stroke={colors[idx % colors.length]}
                     fill={colors[idx % colors.length]}
+                    strokeWidth={2}
+                    dot={false}
                   />
                 ))}
               </>
             ) : (
-              <Line type="monotone" dataKey={config.y} stroke="#8884d8" />
+              <Line type="monotone" dataKey={config.y} stroke={colors[0]} strokeWidth={2} dot={false} />
             )}
           </LineChart>
         </ResponsiveContainer>
@@ -102,25 +107,26 @@ export default function ChartRenderer({ config, data }: ChartRendererProps) {
     return (
       <div className="chart-container">
         {config.title && <h4 className="chart-title">{config.title}</h4>}
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={320}>
           <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey={config.x} />
-            <YAxis />
-            <Tooltip />
+            <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+            <XAxis dataKey={config.x} tick={axisStyle} stroke={gridColor} />
+            <YAxis tick={axisStyle} stroke={gridColor} />
+            <Tooltip contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 6, color: '#e6edf3' }} />
             {config.series ? (
               <>
-                <Legend />
+                <Legend wrapperStyle={{ color: '#8b949e', fontSize: 12 }} />
                 {seriesValues.map((series, idx) => (
                   <Bar
                     key={series}
                     dataKey={series}
                     fill={colors[idx % colors.length]}
+                    radius={[3, 3, 0, 0]}
                   />
                 ))}
               </>
             ) : (
-              <Bar dataKey={config.y} fill="#8884d8" />
+              <Bar dataKey={config.y} fill={colors[0]} radius={[3, 3, 0, 0]} />
             )}
           </BarChart>
         </ResponsiveContainer>

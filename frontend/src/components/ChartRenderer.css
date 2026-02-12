@@ -1,12 +1,11 @@
 .chart-container {
   width: 100%;
-  padding: 1rem;
+  padding: 0.5rem 0;
 }
 
 .chart-title {
-  margin-bottom: 1rem;
-  font-size: 1.1rem;
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
   font-weight: 600;
-  color: #333;
+  color: var(--text-primary);
 }
-

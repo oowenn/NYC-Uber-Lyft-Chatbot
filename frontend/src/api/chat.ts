@@ -46,3 +46,103 @@ export async function sendMessage(message: string, turnstileToken: string): Prom
   }
 }
 
+export async function sendMessageStream(
+  message: string,
+  turnstileToken: string,
+  onStage: (stage: string) => void
+): Promise<ChatResponse> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 300000)
+
+  try {
+    const response = await fetch(getApiPath('/chat/stream'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        turnstile_token: turnstileToken,
+      }),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      let detail = `Server error (${response.status})`
+      try {
+        const errJson = await response.json()
+        detail = errJson?.detail || errJson?.error || detail
+      } catch {
+        // no-op
+      }
+      throw new Error(detail)
+    }
+
+    if (!response.body) {
+      throw new Error('Streaming response body is empty')
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult: ChatResponse | null = null
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() || ''
+
+      for (const eventBlock of events) {
+        const parsed = parseSseEvent(eventBlock)
+        if (!parsed) continue
+
+        if (parsed.event === 'stage' && parsed.data?.stage) {
+          onStage(parsed.data.stage)
+        } else if (parsed.event === 'result') {
+          finalResult = parsed.data as ChatResponse
+        } else if (parsed.event === 'error') {
+          throw new Error(parsed.data?.detail || parsed.data?.error || 'Streaming request failed')
+        } else if (parsed.event === 'done') {
+          break
+        }
+      }
+    }
+
+    if (!finalResult) {
+      throw new Error('No final result received from streaming endpoint')
+    }
+    return finalResult
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Request timed out after 5 minutes')
+    }
+    throw new Error(error?.message || 'Network error')
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function parseSseEvent(block: string): { event: string; data: any } | null {
+  const lines = block.split('\n').map((line) => line.trim())
+  let eventName = 'message'
+  const dataLines: string[] = []
+
+  for (const line of lines) {
+    if (!line) continue
+    if (line.startsWith('event:')) {
+      eventName = line.slice('event:'.length).trim()
+    } else if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trim())
+    }
+  }
+
+  if (dataLines.length === 0) return null
+  const raw = dataLines.join('\n')
+  try {
+    return { event: eventName, data: JSON.parse(raw) }
+  } catch {
+    return { event: eventName, data: raw }
+  }
+}
+

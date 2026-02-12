@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ChartRenderer from './ChartRenderer'
 import DataTable from './DataTable'
+import type { LoadingStage } from './ChatInterface'
 import './MessageList.css'
 
 interface Message {
@@ -8,8 +9,8 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   sql?: string
-  data?: any[]  // Full dataset for CSV
-  data_preview?: any[]  // Preview for table
+  data?: any[]
+  data_preview?: any[]
   chart?: any
   chart_image_url?: string
   sources?: string[]
@@ -17,7 +18,13 @@ interface Message {
   cached?: boolean
 }
 
-type LoadingStage = 'idle' | 'generating-sql' | 'fetching-data' | 'generating-visualization'
+const STAGE_LABELS: Record<LoadingStage, string> = {
+  idle: '',
+  'generating-sql': 'Generating SQL',
+  'running-query': 'Executing SQL',
+  'generating-chart': 'Generating chart spec',
+  rendering: 'Rendering chart',
+}
 
 interface MessageListProps {
   messages: Message[]
@@ -26,33 +33,26 @@ interface MessageListProps {
   onShowSQL: (message: Message) => void
   previewData?: any
   previewLoading?: boolean
+  onExampleClick?: (prompt: string) => void
 }
 
-export default function MessageList({ messages, loading, loadingStage = 'idle', previewData, previewLoading }: MessageListProps) {
+export default function MessageList({ messages, loading, loadingStage = 'idle', previewData, previewLoading, onExampleClick }: MessageListProps) {
   const [expandedSQL, setExpandedSQL] = useState<Set<string>>(new Set())
   const [expandedData, setExpandedData] = useState<Set<string>>(new Set())
-  const [expandedPreview, setExpandedPreview] = useState<boolean>(false)
+  const [expandedPreview, setExpandedPreview] = useState(false)
 
-  const toggleSQL = (messageId: string) => {
+  const toggleSQL = (id: string) => {
     setExpandedSQL(prev => {
       const next = new Set(prev)
-      if (next.has(messageId)) {
-        next.delete(messageId)
-      } else {
-        next.add(messageId)
-      }
+      next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
   }
 
-  const toggleData = (messageId: string) => {
+  const toggleData = (id: string) => {
     setExpandedData(prev => {
       const next = new Set(prev)
-      if (next.has(messageId)) {
-        next.delete(messageId)
-      } else {
-        next.add(messageId)
-      }
+      next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
   }
@@ -60,175 +60,150 @@ export default function MessageList({ messages, loading, loadingStage = 'idle', 
   return (
     <div className="message-list">
       {messages.map((message) => (
-        <div key={message.id} className={`message message-${message.role}`}>
-          <div className="message-content">
-            <div className="message-text" style={{ whiteSpace: 'pre-line' }}>{message.content}</div>
-            
-            {/* Preview Data button for welcome message */}
+        <div key={message.id} className={`msg msg-${message.role}`}>
+          {/* Avatar */}
+          <div className="msg-avatar">
+            {message.role === 'assistant' ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            )}
+          </div>
+
+          {/* Body */}
+          <div className="msg-body">
+            <div className="msg-role">
+              {message.role === 'assistant' ? 'Agent' : 'You'}
+              {message.cached && <span className="badge badge-cached">cached</span>}
+              {message.mode === 'error' && <span className="badge badge-error">error</span>}
+            </div>
+
+            <div className="msg-text">{message.content}</div>
+
+            {/* Example prompts in welcome message */}
+            {message.id === 'welcome' && onExampleClick && (
+              <div className="example-chips">
+                {['Top 10 pickup zones', 'What is the percentage of base passenger fares held by each company?', 'Show hourly trips by company for the first 3 days of Jan 2023'].map((q, i) => (
+                  <button key={i} className="chip" onClick={() => onExampleClick(q)}>{q}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Data preview for welcome */}
             {message.id === 'welcome' && previewData && !previewLoading && (
-              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
-                <button
-                  className="data-preview-toggle"
-                  onClick={() => setExpandedPreview(!expandedPreview)}
-                  style={{ 
-                    padding: '0.5rem 1rem',
-                    background: '#6c757d',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                  {expandedPreview ? 'Hide' : 'Preview'} Data
+              <div className="preview-section">
+                <button className="pill-btn" onClick={() => setExpandedPreview(!expandedPreview)}>
+                  {expandedPreview ? 'Hide' : 'Preview'} data
                 </button>
                 {expandedPreview && (
-                  <div style={{ marginTop: '1rem', textAlign: 'left' }}>
-                    <div style={{ marginBottom: '0.5rem' }}>
-                      <h3 style={{ margin: '0 0 0.5rem 0', color: '#333', fontSize: '1rem', textAlign: 'left' }}>Sample Data (fhv_with_company view)</h3>
-                    </div>
-                    <div style={{ overflowX: 'auto', width: '100%' }}>
-                      <table style={{ 
-                        width: '100%', 
-                        borderCollapse: 'collapse', 
-                        fontSize: '0.85rem',
-                        backgroundColor: 'white'
-                      }}>
+                  <div className="preview-table-wrap">
+                    <div className="preview-label">Sample rows from <code>fhv_with_company</code></div>
+                    <div className="table-scroll">
+                      <table className="preview-table">
                         <thead>
                           <tr>
                             {previewData.columns.map((col: string) => (
-                              <th key={col} style={{
-                                padding: '0.6rem',
-                                textAlign: 'left',
-                                border: '1px solid #ddd',
-                                background: '#f8f9fa',
-                                fontWeight: 600,
-                                color: '#333'
-                              }}>{col}</th>
+                              <th key={col}>{col}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           {previewData.data.map((row: any, idx: number) => (
-                            <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? 'white' : '#f9f9f9' }}>
+                            <tr key={idx}>
                               {previewData.columns.map((col: string) => (
-                                <td key={col} style={{
-                                  padding: '0.6rem',
-                                  textAlign: 'left',
-                                  border: '1px solid #ddd',
-                                  color: '#212529'
-                                }}>{String(row[col] ?? '')}</td>
+                                <td key={col}>{String(row[col] ?? '')}</td>
                               ))}
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
-                    <p style={{ 
-                      fontSize: '0.85rem', 
-                      color: '#666', 
-                      marginTop: '1rem',
-                      textAlign: 'left'
-                    }}>
-                      Showing {previewData.row_count} sample rows. Ask questions about this data below.
-                    </p>
+                    <div className="preview-footer">
+                      Showing {previewData.row_count} sample rows.
+                    </div>
                   </div>
                 )}
               </div>
             )}
-            
+
+            {/* Sources */}
             {message.sources && message.sources.length > 0 && (
-              <div className="message-sources">
-                <strong>Sources:</strong> {message.sources.join(', ')}
-              </div>
+              <div className="msg-sources">Sources: {message.sources.join(', ')}</div>
             )}
-            
-            {message.cached && (
-              <span className="cached-badge">Cached</span>
-            )}
-            
+
+            {/* Chart image */}
             {message.chart_image_url && (
-              <div className="message-chart">
-                <img 
-                  src={message.chart_image_url} 
-                  alt={message.chart?.title || "Chart"} 
-                  style={{ maxWidth: '100%', height: 'auto', borderRadius: '8px' }}
-                />
+              <div className="msg-chart">
+                <img src={message.chart_image_url} alt={message.chart?.title || 'Chart'} />
               </div>
             )}
-            
+
+            {/* Client-side chart renderer */}
             {message.chart && !message.chart_image_url && (
-              <div className="message-chart">
+              <div className="msg-chart">
                 <ChartRenderer config={message.chart} data={message.data || []} />
               </div>
             )}
-            
-            {/* Action buttons container - SQL and Data buttons side by side */}
-            {(message.sql || ((message.data_preview && message.data_preview.length > 0) || (message.data && message.data.length > 0))) && (
-              <div className="action-buttons-container">
+
+            {/* Action pills */}
+            {(message.sql || hasData(message)) && (
+              <div className="action-pills">
                 {message.sql && (
-                  <button
-                    className="sql-toggle"
-                    onClick={() => toggleSQL(message.id)}
-                  >
+                  <button className="pill-btn pill-sql" onClick={() => toggleSQL(message.id)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
                     {expandedSQL.has(message.id) ? 'Hide' : 'Show'} SQL
                   </button>
                 )}
-                {((message.data_preview && message.data_preview.length > 0) || (message.data && message.data.length > 0)) && (
-                  <button
-                    className="data-toggle"
-                    onClick={() => toggleData(message.id)}
-                  >
+                {hasData(message) && (
+                  <button className="pill-btn pill-data" onClick={() => toggleData(message.id)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
                     {expandedData.has(message.id) ? 'Hide' : 'Show'} Data
                   </button>
                 )}
               </div>
             )}
-            
-            {/* SQL section - appears before Data if both are expanded */}
+
+            {/* Expanded SQL */}
             {message.sql && expandedSQL.has(message.id) && (
-              <div className="sql-section">
-                <pre className="sql-code">{message.sql}</pre>
+              <div className="code-block">
+                <pre>{message.sql}</pre>
               </div>
             )}
-            
-            {/* Data section - appears after SQL if both are expanded */}
-            {((message.data_preview && message.data_preview.length > 0) || (message.data && message.data.length > 0)) && expandedData.has(message.id) && (
-              <div className="data-section">
-                <div className="message-table">
-                  <DataTable 
-                    data={message.data_preview || message.data || []} 
-                    fullData={message.data}
-                  />
-                </div>
+
+            {/* Expanded data table */}
+            {hasData(message) && expandedData.has(message.id) && (
+              <div className="data-block">
+                <DataTable data={message.data_preview || message.data || []} fullData={message.data} />
               </div>
             )}
           </div>
         </div>
       ))}
-      
-      {loading && (
-        <div className="message message-assistant">
-          <div className="message-content">
-            <div className="loading-status">
-              {loadingStage === 'generating-sql' && (
-                <div className="loading-stage">
-                  <span className="loading-dot"></span>
-                  <span>Generating SQL...</span>
-                </div>
-              )}
-              {loadingStage === 'fetching-data' && (
-                <div className="loading-stage">
-                  <span className="loading-dot"></span>
-                  <span>Fetching data...</span>
-                </div>
-              )}
-              {loadingStage === 'generating-visualization' && (
-                <div className="loading-stage">
-                  <span className="loading-dot"></span>
-                  <span>Generating visualization...</span>
-                </div>
-              )}
+
+      {/* Thinking / loading indicator */}
+      {loading && loadingStage !== 'idle' && (
+        <div className="msg msg-assistant">
+          <div className="msg-avatar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+              <path d="M2 17l10 5 10-5"/>
+              <path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <div className="msg-body">
+            <div className="msg-role">Agent</div>
+            <div className="thinking-indicator">
+              <div className="thinking-dots">
+                <span /><span /><span />
+              </div>
+              <span className="thinking-label">{STAGE_LABELS[loadingStage]}</span>
             </div>
           </div>
         </div>
@@ -237,3 +212,9 @@ export default function MessageList({ messages, loading, loadingStage = 'idle', 
   )
 }
 
+function hasData(message: Message): boolean {
+  return (
+    (Array.isArray(message.data_preview) && message.data_preview.length > 0) ||
+    (Array.isArray(message.data) && message.data.length > 0)
+  )
+}

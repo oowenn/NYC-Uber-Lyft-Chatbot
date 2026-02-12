@@ -2,10 +2,12 @@
 Chat endpoint - main query handler
 """
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import os
+import json
+import asyncio
 
 from query.engine import QueryEngine
 from query.metrics import MetricTemplates
@@ -33,6 +35,18 @@ class ChatResponse(BaseModel):
     mode: str  # "rag", "template", "sql", "error"
 
 
+def _to_chart_image_url(result: Dict[str, Any]) -> Optional[str]:
+    if result.get("chart_image_path"):
+        return f"/api/chart-image?path={result['chart_image_path']}"
+    return None
+
+
+def _response_to_dict(response: ChatResponse) -> Dict[str, Any]:
+    if hasattr(response, "model_dump"):
+        return response.model_dump()
+    return response.dict()
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, chat_req: ChatRequest):
     """Main chat endpoint"""
@@ -57,12 +71,8 @@ async def chat(request: Request, chat_req: ChatRequest):
                 print(f"{'='*80}\n")
                 raise
             
-            # Convert chart_image_path to URL if present
-            chart_image_url = None
-            if result.get("chart_image_path"):
-                # Store the path temporarily and return a URL
-                # In production, you'd want to serve this from a static file endpoint
-                chart_image_url = f"/api/chart-image?path={result['chart_image_path']}"
+            # Convert chart image path to URL if present
+            chart_image_url = _to_chart_image_url(result)
             
             response = ChatResponse(
                 answer=result.get("answer", "Query processed"),
@@ -137,6 +147,100 @@ async def chat(request: Request, chat_req: ChatRequest):
                 status_code=500, 
                 detail=f"Internal server error: {error_detail}. Check server logs for details."
             )
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: Request, chat_req: ChatRequest):
+    """
+    Streaming chat endpoint (SSE) for stage-accurate frontend transitions.
+
+    Emits events:
+    - stage: {"stage": "..."}
+    - result: ChatResponse payload
+    - error: {"detail": "..."}
+    - done: {}
+    """
+    duckdb_conn = request.app.state.duckdb
+    use_llm_pipeline = os.getenv("USE_LLM_PIPELINE", "true").lower() == "true"
+
+    async def event_generator():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def progress_callback(stage: str):
+            await queue.put(("stage", {"stage": stage}))
+
+        async def run_pipeline():
+            try:
+                if use_llm_pipeline:
+                    result = await process_query(
+                        chat_req.message,
+                        duckdb_conn,
+                        progress_callback=progress_callback
+                    )
+                    response_payload = _response_to_dict(ChatResponse(
+                        answer=result.get("answer", "Query processed"),
+                        sql=result.get("sql"),
+                        data=result.get("data"),
+                        data_preview=result.get("data_preview"),
+                        chart=result.get("chart"),
+                        chart_image_url=_to_chart_image_url(result),
+                        mode=result.get("mode", "sql")
+                    ))
+                else:
+                    # Template fallback path still emits "running-query"
+                    await progress_callback("running-query")
+                    query_engine = QueryEngine(duckdb_conn)
+                    metric_templates = MetricTemplates()
+                    template_match = metric_templates.match(chat_req.message)
+                    if template_match:
+                        template_name = template_match["template"]
+                        template_def = metric_templates.get_template(template_name)
+                        result = query_engine.execute_template(template_name, template_match.get("params", {}))
+                    else:
+                        template_name = "hourly_trips_by_company"
+                        template_def = metric_templates.get_template(template_name)
+                        result = query_engine.execute_template(template_name, {})
+
+                    try:
+                        answer = template_def["answer_template"].format(**result["summary"])
+                    except KeyError:
+                        answer = template_def.get("answer_template", "Query executed successfully")
+
+                    response_payload = _response_to_dict(ChatResponse(
+                        answer=answer,
+                        sql=result.get("sql"),
+                        data=result.get("data"),
+                        chart=result.get("chart"),
+                        mode="template"
+                    ))
+
+                await queue.put(("result", response_payload))
+            except Exception as e:
+                await queue.put(("error", {"detail": str(e)}))
+            finally:
+                await queue.put(("done", {}))
+
+        worker = asyncio.create_task(run_pipeline())
+
+        try:
+            while True:
+                event_name, payload = await queue.get()
+                yield f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+                if event_name == "done":
+                    break
+        finally:
+            if not worker.done():
+                worker.cancel()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/chart-image")

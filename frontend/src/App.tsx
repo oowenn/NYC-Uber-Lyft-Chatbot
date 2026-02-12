@@ -6,6 +6,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>NYC Uber/Lyft Data Agent</h1>
+        <span className="header-badge">GPT-powered</span>
       </header>
       <main className="app-main">
         <ChatInterface />
@@ -15,4 +16,5 @@ function App() {
 }
 
 export default App
+
 

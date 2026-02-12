@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Turnstile } from '@marsidev/react-turnstile'
 import MessageList from './MessageList'
-import { sendMessage } from '../api/chat'
+import { sendMessageStream } from '../api/chat'
 import './ChatInterface.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -14,7 +14,6 @@ const getApiPath = (endpoint: string) => {
     return `${API_URL}/api${endpoint}`
   }
 }
-// Detect dev mode: localhost, 127.0.0.1, or /api (Vite proxy)
 const isDevMode = API_URL.includes('localhost') || API_URL.includes('127.0.0.1') || API_URL === '/api'
 
 interface Message {
@@ -31,15 +30,30 @@ interface Message {
   cached?: boolean
 }
 
-type LoadingStage = 'idle' | 'generating-sql' | 'fetching-data' | 'generating-visualization'
+export type LoadingStage =
+  | 'idle'
+  | 'generating-sql'
+  | 'running-query'
+  | 'generating-chart'
+  | 'rendering'
+
+const STREAM_STAGES: LoadingStage[] = [
+  'generating-sql',
+  'running-query',
+  'generating-chart',
+  'rendering',
+]
+
+function isLoadingStage(value: string): value is LoadingStage {
+  return value === 'idle' || STREAM_STAGES.includes(value as LoadingStage)
+}
 
 export default function ChatInterface() {
-  // Initialize with welcome message from assistant
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Welcome! 👋\n\nTry asking:\n• "Top 10 pickup zones"\n• "What is the percentage of base passenger fares held by each company?"\n• "Show hourly trips by company for the first 3 days of January 2023"\n• "What do the trip miles by company over time look like?"'
+      content: 'Welcome! Ask me anything about NYC Uber & Lyft trip data (Jan–Mar 2023), or\ntry one of these:'
     }
   ])
   const [input, setInput] = useState('')
@@ -50,7 +64,6 @@ export default function ChatInterface() {
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Fetch preview data on mount
   useEffect(() => {
@@ -61,8 +74,8 @@ export default function ChatInterface() {
           const data = await response.json()
           setPreviewData(data)
         }
-      } catch (err) {
-        // Silently fail - preview is optional
+      } catch {
+        // Silently fail
       } finally {
         setPreviewLoading(false)
       }
@@ -72,11 +85,10 @@ export default function ChatInterface() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, loadingStage])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // In dev mode, allow submission even without Turnstile token
     if (!input.trim() || loading || (!turnstileToken && !isDevMode)) return
 
     const userMessage: Message = {
@@ -89,32 +101,20 @@ export default function ChatInterface() {
     setInput('')
     setLoading(true)
     setError('')
-    
-    // Clear any existing timer
-    if (stageTimerRef.current) {
-      clearTimeout(stageTimerRef.current)
-    }
-    
-    // Progress through loading stages
-    // Start with SQL generation
     setLoadingStage('generating-sql')
-    
-    // Move to "fetching-data" after a short delay (SQL generation typically takes longer)
-    stageTimerRef.current = setTimeout(() => {
-      setLoadingStage('fetching-data')
-    }, 3000) // Give SQL generation 3 seconds before showing "fetching data"
 
     try {
-      // Use a dummy token in dev mode if Turnstile hasn't provided one
       const token = turnstileToken || (isDevMode ? 'dev-token' : '')
-      const response = await sendMessage(input.trim(), token)
-      
-      // Only show "generating-visualization" if we actually get a chart in the response
-      // or if we've been waiting long enough (chart generation happens after data fetch)
-      if (response.chart || response.chart_image_url) {
-        setLoadingStage('generating-visualization')
-      }
-      
+      const response = await sendMessageStream(
+        input.trim(),
+        token,
+        (stage) => {
+          if (isLoadingStage(stage)) {
+            setLoadingStage(stage)
+          }
+        }
+      )
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -142,68 +142,65 @@ export default function ChatInterface() {
     } finally {
       setLoading(false)
       setLoadingStage('idle')
-      if (stageTimerRef.current) {
-        clearTimeout(stageTimerRef.current)
-        stageTimerRef.current = null
-      }
-      setTurnstileToken('') // Reset token after use
+      setTurnstileToken('')
     }
+  }
+
+  const handleExampleClick = (prompt: string) => {
+    setInput(prompt)
   }
 
   return (
     <div className="chat-interface">
-      <MessageList 
-        messages={messages} 
-        loading={loading}
-        loadingStage={loadingStage}
-        onShowSQL={(message) => console.log('SQL:', message.sql)}
-        previewData={previewData}
-        previewLoading={previewLoading}
-      />
-      
-      {error && <div className="error-message">{error}</div>}
-      
+      <div className="chat-messages-area">
+        <MessageList
+          messages={messages}
+          loading={loading}
+          loadingStage={loadingStage}
+          onShowSQL={(message) => console.log('SQL:', message.sql)}
+          previewData={previewData}
+          previewLoading={previewLoading}
+          onExampleClick={handleExampleClick}
+        />
+        <div ref={messagesEndRef} />
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
       <form onSubmit={handleSubmit} className="chat-input-form">
         {!isDevMode && (
           <div className="turnstile-container">
             <Turnstile
-              siteKey={TURNSTILE_SITE_KEY || '1x00000000000000000000AA'} // Demo key if not set
-              onSuccess={(token) => {
-                setTurnstileToken(token)
-                setError('') // Clear any previous errors
-              }}
-              onError={() => {
-                setError('Turnstile verification failed')
-              }}
-              options={{
-                theme: 'light',
-                size: 'normal'
-              }}
+              siteKey={TURNSTILE_SITE_KEY || '1x00000000000000000000AA'}
+              onSuccess={(token) => { setTurnstileToken(token); setError('') }}
+              onError={() => { setError('Turnstile verification failed') }}
+              options={{ theme: 'dark', size: 'normal' }}
             />
           </div>
         )}
-        
-        <div className="input-container">
+
+        <div className="input-row">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="ASK about NYC Uber/Lyft trip data..."
+            placeholder="Ask about NYC Uber/Lyft trip data..."
             disabled={loading}
             className="chat-input"
           />
           <button
             type="submit"
             disabled={loading || !input.trim()}
-            className="send-button"
+            className="send-btn"
           >
-            {loading ? 'Sending...' : 'Send'}
+            {loading ? (
+              <span className="send-spinner" />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            )}
           </button>
         </div>
       </form>
-      
-      <div ref={messagesEndRef} />
     </div>
   )
 }
-

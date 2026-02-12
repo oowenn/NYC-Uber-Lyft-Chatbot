@@ -4,7 +4,8 @@ LLM pipeline service for generating SQL and chart specs from user questions
 import os
 import sys
 import json
-from typing import Dict, Any, List, Optional
+import inspect
+from typing import Dict, Any, List, Optional, Callable, Awaitable
 from pathlib import Path
 
 # Ensure backend directory is in path for imports
@@ -25,7 +26,11 @@ import matplotlib
 matplotlib.use("Agg")
 
 
-async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -> Dict[str, Any]:
+async def process_query(
+    question: str,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    progress_callback: Optional[Callable[[str], Awaitable[None]]] = None
+) -> Dict[str, Any]:
     """
     Process a user question through the LLM pipeline:
     1. Generate SQL with validation
@@ -42,6 +47,17 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
             "chart_image_path": Optional[str] (path to rendered chart)
         }
     """
+    async def emit_stage(stage: str) -> None:
+        if not progress_callback:
+            return
+        try:
+            maybe_coro = progress_callback(stage)
+            if inspect.isawaitable(maybe_coro):
+                await maybe_coro
+        except Exception:
+            # Progress reporting should never break query processing.
+            pass
+
     # Use llama3:latest if available, fallback to llama3
     model = os.getenv("OLLAMA_MODEL", "llama3:latest")
     timeout = float(os.getenv("LLM_TIMEOUT", "300"))
@@ -49,6 +65,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
     max_spec_attempts = int(os.getenv("MAX_SPEC_ATTEMPTS", "3"))
     
     # 1) Generate SQL with validation
+    await emit_stage("generating-sql")
     try:
         # Enable verbose logging to see what's happening
         # Note: generate_sql_with_validation creates its own DuckDB connection
@@ -136,6 +153,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
         }
     
     # 2) Execute SQL
+    await emit_stage("running-query")
     try:
         rows = run_sql(duckdb_conn, sql, limit=500)
         df = pd.DataFrame(rows)
@@ -160,6 +178,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
         }
     
     # 3) Generate chart spec (matching test_llm_pipeline.py logic)
+    await emit_stage("generating-chart")
     chart_spec = None
     last_error = None
     last_spec_attempt = None
@@ -329,6 +348,7 @@ Return ONLY valid JSON, no extra text or code fences.
         
         # Try to render chart
         try:
+            await emit_stage("rendering")
             # Use a more accessible path - store in backend/static/charts or /tmp
             import tempfile
             import uuid

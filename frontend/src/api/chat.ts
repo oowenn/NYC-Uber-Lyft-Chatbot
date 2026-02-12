@@ -24,7 +24,8 @@ export async function sendMessage(message: string, turnstileToken: string): Prom
       {
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 300000 // 5 minutes - backend may run SQL + chart generation (multiple LLM calls)
       }
     )
     

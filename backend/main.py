@@ -3,6 +3,7 @@ NYC Ridehail Analytics Chatbot - FastAPI Backend
 """
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,7 +19,11 @@ from middleware.rate_limit import RateLimitMiddleware
 from middleware.circuit_breaker import CircuitBreakerMiddleware
 from db.duckdb_setup import init_duckdb, close_duckdb
 
-load_dotenv()
+# Load env files explicitly so local dev works whether vars are in
+# backend/.env (legacy/local) or root .env (docker/demo).
+backend_dir = Path(__file__).resolve().parent
+load_dotenv(backend_dir / ".env", override=False)
+load_dotenv(backend_dir.parent / ".env", override=False)
 
 # Global state
 duckdb_conn = None

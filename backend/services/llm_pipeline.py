@@ -44,7 +44,7 @@ async def process_query(question: str, duckdb_conn: duckdb.DuckDBPyConnection) -
     """
     # Use llama3:latest if available, fallback to llama3
     model = os.getenv("OLLAMA_MODEL", "llama3:latest")
-    timeout = float(os.getenv("LLM_TIMEOUT", "180"))
+    timeout = float(os.getenv("LLM_TIMEOUT", "300"))
     max_sql_attempts = int(os.getenv("MAX_SQL_ATTEMPTS", "3"))
     max_spec_attempts = int(os.getenv("MAX_SPEC_ATTEMPTS", "3"))
     

@@ -15,7 +15,7 @@ Usage:
 
 Environment variables:
     OLLAMA_MODEL: Model to use (default: llama3)
-    LLM_TIMEOUT: Timeout in seconds (default: 180)
+    LLM_TIMEOUT: Timeout in seconds (default: 300)
     MAX_SQL_ATTEMPTS: Max retries for SQL generation (default: 3)
     MAX_SPEC_ATTEMPTS: Max retries for chart spec generation (default: 3)
 
@@ -253,7 +253,7 @@ Return ONLY valid JSON, no extra text or code fences.
 
 
 async def call_ollama(prompt: str, model: str, timeout: float) -> str:
-    """Call Ollama or Groq API based on environment variables"""
+    """Call Ollama, Groq, or OpenAI API based on environment variables."""
     provider = os.getenv("LLM_PROVIDER", "ollama")
     
     if provider == "groq":
@@ -276,7 +276,7 @@ async def call_ollama(prompt: str, model: str, timeout: float) -> str:
                         "temperature": 0.1,
                         "max_tokens": 2048
                     },
-                    timeout=min(timeout, 30.0),  # Groq is fast
+                    timeout=timeout,
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -287,6 +287,52 @@ async def call_ollama(prompt: str, model: str, timeout: float) -> str:
                 raise RuntimeError(f"Groq API error {e.response.status_code}: {e.response.text}") from e
             except httpx.TimeoutException as e:
                 raise TimeoutError(f"Groq request timed out after {timeout}s") from e
+    
+    if provider == "openai":
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if not openai_key:
+            raise ValueError("OPENAI_API_KEY not set. Set it in your .env file.")
+        
+        openai_model = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {openai_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": openai_model,
+                        "input": prompt,
+                        "max_output_tokens": 2048
+                    },
+                    timeout=timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Preferred field in Responses API
+                text = data.get("output_text")
+                if isinstance(text, str) and text.strip():
+                    return text
+
+                # Fallback: extract text chunks from output array
+                chunks = []
+                for item in data.get("output", []):
+                    if item.get("type") == "message":
+                        for part in item.get("content", []):
+                            part_type = part.get("type")
+                            if part_type in ("output_text", "text"):
+                                value = part.get("text")
+                                if isinstance(value, str) and value:
+                                    chunks.append(value)
+                return "\n".join(chunks).strip()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    raise RuntimeError("OpenAI rate limit exceeded. Please wait and retry.") from e
+                raise RuntimeError(f"OpenAI API error {e.response.status_code}: {e.response.text}") from e
+            except httpx.TimeoutException as e:
+                raise TimeoutError(f"OpenAI request timed out after {timeout}s") from e
     
     # Default to Ollama
     base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
@@ -435,7 +481,7 @@ async def generate_sql_with_validation(question: str, model: str, timeout: float
 async def main():
     question = "Show hourly trips by company for the first 3 days of January 2023."
     model = os.getenv("OLLAMA_MODEL", "llama3")
-    timeout = float(os.getenv("LLM_TIMEOUT", "180"))
+    timeout = float(os.getenv("LLM_TIMEOUT", "300"))
     max_sql_attempts = int(os.getenv("MAX_SQL_ATTEMPTS", "3"))
     max_spec_attempts = int(os.getenv("MAX_SPEC_ATTEMPTS", "3"))
 

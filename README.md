@@ -295,14 +295,6 @@ The test script will:
 ├── .env                            # Environment variables (for Docker)
 └── Makefile                        # Development commands
 ```
-
-## Additional Documentation
-
-- **[LLM_SETUP.md](LLM_SETUP.md)** - Detailed LLM configuration guide (Groq vs Ollama)
-- **[DOCKER.md](DOCKER.md)** - Docker setup and usage
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment guide
-- **[ENV_FILES_EXPLAINED.md](ENV_FILES_EXPLAINED.md)** - Environment file locations explained
-
 ## License
 
 MIT

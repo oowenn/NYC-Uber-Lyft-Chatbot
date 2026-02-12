@@ -119,18 +119,31 @@ Return only the SQL:"""
         
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
+                "https://api.openai.com/v1/responses",
                 headers={"Authorization": f"Bearer {self.openai_key}"},
                 json={
-                    "model": "gpt-3.5-turbo",
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.1
+                    "model": os.getenv("OPENAI_MODEL", "gpt-5-nano"),
+                    "input": prompt,
+                    "max_output_tokens": 2048
                 },
                 timeout=60.0
             )
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            text = data.get("output_text")
+            if isinstance(text, str) and text.strip():
+                return text
+
+            chunks = []
+            for item in data.get("output", []):
+                if item.get("type") == "message":
+                    for part in item.get("content", []):
+                        part_type = part.get("type")
+                        if part_type in ("output_text", "text"):
+                            value = part.get("text")
+                            if isinstance(value, str) and value:
+                                chunks.append(value)
+            return "\n".join(chunks).strip()
     
     async def _call_anthropic(self, prompt: str) -> str:
         """Call Anthropic API"""

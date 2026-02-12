@@ -26,7 +26,7 @@ async def test_sql_generation():
     """Test SQL generation with detailed prompt/error logging"""
     question = "Show hourly trips by company for the first 3 days of January 2023."
     model = os.getenv("OLLAMA_MODEL", "llama3")
-    timeout = float(os.getenv("LLM_TIMEOUT", "180"))
+    timeout = float(os.getenv("LLM_TIMEOUT", "300"))
     max_attempts = int(os.getenv("MAX_SQL_ATTEMPTS", "3"))
     
     conn = init_duckdb()

@@ -1,13 +1,18 @@
-.PHONY: help backend-dev frontend-dev build-backend build-frontend setup install test clean test-llm-pipeline docker-build docker-up docker-down docker-logs docker-prod-up docker-prod-down docker-clean
+.PHONY: help backend-dev backend-dev-groq backend-dev-openai frontend-dev build-backend build-frontend setup install test clean test-llm-pipeline docker-build docker-up docker-down docker-logs docker-prod-up docker-prod-down docker-clean demo
 
 help:
 	@echo "NYC Ridehail Analytics Chatbot - Development Commands"
+	@echo ""
+	@echo "Demo (interview / quick run):"
+	@echo "  make demo           - Check env and print Docker run steps (see DEMO_GUIDE.md)"
 	@echo ""
 	@echo "Setup:"
 	@echo "  make setup          - Initial setup (install dependencies)"
 	@echo ""
 	@echo "Development:"
 	@echo "  make backend-dev    - Start backend dev server (with LLM pipeline enabled)"
+	@echo "  make backend-dev-groq - Start backend dev server forcing Groq API"
+	@echo "  make backend-dev-openai - Start backend dev server forcing OpenAI API"
 	@echo "  make frontend-dev   - Start frontend dev server"
 	@echo ""
 	@echo "Build:"
@@ -30,6 +35,20 @@ help:
 	@echo "Utilities:"
 	@echo "  make clean          - Clean cache and temp files"
 
+demo:
+	@echo "=== Demo setup (see DEMO_GUIDE.md for full walkthrough) ==="
+	@echo ""
+	@if [ ! -f .env ]; then \
+		echo "  .env not found. Create it from .env.example and set GROQ_API_KEY."; \
+		echo "  Example: cp .env.example .env"; \
+		echo ""; \
+	else \
+		echo "  .env found."; \
+	fi
+	@echo "  Then run: docker-compose up --build"
+	@echo "  Frontend: http://localhost   Backend: http://localhost:8000"
+	@echo ""
+
 setup:
 	@echo "Setting up backend..."
 	cd backend && python -m venv venv || true
@@ -40,6 +59,12 @@ setup:
 
 backend-dev:
 	cd backend && source venv/bin/activate && USE_LLM_PIPELINE=true uvicorn main:app --reload --port 8000
+
+backend-dev-groq:
+	cd backend && source venv/bin/activate && USE_LLM_PIPELINE=true LLM_PROVIDER=groq uvicorn main:app --reload --port 8000
+
+backend-dev-openai:
+	cd backend && source venv/bin/activate && USE_LLM_PIPELINE=true LLM_PROVIDER=openai uvicorn main:app --reload --port 8000
 
 frontend-dev:
 	cd frontend && npm run dev
@@ -96,4 +121,3 @@ clean:
 	rm -rf /tmp/nyc_taxi_charts
 	rm -rf charts/*.png
 	rm -f backend/scripts/llm_chart.png
-

@@ -58,8 +58,13 @@ async def process_query(
             # Progress reporting should never break query processing.
             pass
 
-    # Use llama3:latest if available, fallback to llama3
-    model = os.getenv("OLLAMA_MODEL", "llama3:latest")
+    provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    if provider == "openai":
+        model = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+    elif provider == "groq":
+        model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    else:
+        model = os.getenv("OLLAMA_MODEL", "llama3:latest")
     timeout = float(os.getenv("LLM_TIMEOUT", "300"))
     max_sql_attempts = int(os.getenv("MAX_SQL_ATTEMPTS", "3"))
     max_spec_attempts = int(os.getenv("MAX_SPEC_ATTEMPTS", "3"))
@@ -76,6 +81,7 @@ async def process_query(
             print(f"\n{'='*80}")
             print(f"WARNING: generate_sql_with_validation returned None")
             print(f"Question: {question}")
+            print(f"Provider: {provider}")
             print(f"Model: {model}")
             print(f"Timeout: {timeout}")
             print(f"Max attempts: {max_sql_attempts}")
@@ -254,8 +260,8 @@ Return ONLY valid JSON, no extra text or code fences.
             last_spec_attempt = {"spec": chart_spec, "error": last_error}
             continue
         except Exception as e:
-            print(f"LLM call failed: {e}")
-            error_msg = str(e)
+            error_msg = str(e).strip() or repr(e)
+            print(f"LLM call failed: {error_msg}")
             # Check if it's a rate limit error
             if "rate limit" in error_msg.lower() or "429" in error_msg or "too many requests" in error_msg.lower():
                 # Rate limit hit - return error immediately
@@ -370,7 +376,7 @@ Return ONLY valid JSON, no extra text or code fences.
             
             # Success!
             return {
-                "answer": f"I found {len(df)} rows. Here's a visualization of the data.",
+                "answer": f"Here's a visualization of the data.",
                 "sql": sql,
                 "data": rows,  # Return all data for CSV download
                 "data_preview": rows[:10],  # Preview for table display

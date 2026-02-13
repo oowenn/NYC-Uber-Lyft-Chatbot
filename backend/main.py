@@ -21,9 +21,10 @@ from db.duckdb_setup import init_duckdb, close_duckdb
 
 # Load env files explicitly so local dev works whether vars are in
 # backend/.env (legacy/local) or root .env (docker/demo).
+# Root .env should win for interview/demo runs.
 backend_dir = Path(__file__).resolve().parent
 load_dotenv(backend_dir / ".env", override=False)
-load_dotenv(backend_dir.parent / ".env", override=False)
+load_dotenv(backend_dir.parent / ".env", override=True)
 
 # Global state
 duckdb_conn = None
@@ -38,6 +39,16 @@ async def lifespan(app: FastAPI):
     # Initialize DuckDB
     duckdb_conn = init_duckdb()
     app.state.duckdb = duckdb_conn
+
+    provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    if provider == "openai":
+        model = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+    elif provider == "groq":
+        model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    else:
+        model = os.getenv("OLLAMA_MODEL", "llama3:latest")
+    timeout = os.getenv("LLM_TIMEOUT", "300")
+    print(f"LLM config -> provider={provider}, model={model}, timeout={timeout}s")
     
     # Initialize circuit breaker
     from middleware.circuit_breaker import CircuitBreaker

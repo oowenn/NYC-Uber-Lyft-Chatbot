@@ -203,6 +203,13 @@ CRITICAL: GROUP BY error detected. Fix this by:
   CORRECT: SELECT company, SUM(base_passenger_fare) AS total, ROUND(100.0 * SUM(base_passenger_fare) / SUM(SUM(base_passenger_fare)) OVER (), 2) AS percentage FROM ... GROUP BY company
 - When using window functions (OVER()), they can be used alongside GROUP BY in the same SELECT
 """
+    if any("Unrequested temporal grouping" in e for e in errors):
+        specific_guidance += """
+CRITICAL: Aggregation grain mismatch detected.
+- Do not add month/day/hour/date buckets unless the user explicitly asks for a time trend.
+- If the question is comparative (e.g., "...by company"), aggregate at that entity grain only.
+- Keep the time filter in WHERE, but remove temporal columns from SELECT/GROUP BY/ORDER BY.
+"""
     
     sql_text = (sql or "").lower()
     if any("percentage" in e.lower() or "percent" in e.lower() for e in errors) or ("percentage" in sql_text or "percent" in sql_text):
@@ -236,7 +243,8 @@ Please correct the SQL query. Remember:
   * Trip/entity columns: trip_miles, trip_time, company, hvfhs_license_num, base_name, dispatching_base_num, originating_base_num
 - Use pickup_datetime for time filters unless the question explicitly asks for another column
 - Include a time filter within 2023-01-01..2023-03-31
-- For time-based aggregations, use DATE_TRUNC('month', pickup_datetime) AS month (or 'day', 'hour') to create a proper date column instead of extracting year and month separately
+- Only add time buckets (month/day/hour) when the question explicitly asks for time granularity or trend.
+- For time-based aggregations, use DATE_TRUNC('month', pickup_datetime) AS month (or 'day', 'hour') instead of extracting year/month separately
 - Aggregate-first (GROUP BY); include LIMIT (e.g., 500)
 - When counting trips, use COUNT(*) AS trips
 - Pay close attention to the specific errors listed above and fix them directly

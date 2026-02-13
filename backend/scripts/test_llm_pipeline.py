@@ -27,6 +27,7 @@ Requirements:
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,33 @@ from scripts.validation import (
 from scripts.chart_renderer import render_chart_from_spec
 
 ROOT = Path(__file__).resolve().parent.parent
+
+TIME_GRAIN_KEYWORDS = [
+    "over time", "trend", "timeline",
+    "by month", "monthly", "per month", "each month", "month over month",
+    "by day", "daily", "per day", "each day",
+    "by hour", "hourly", "per hour", "each hour",
+    "weekly", "by week", "per week", "each week",
+    "quarterly", "by quarter", "per quarter",
+    "yearly", "annually", "by year", "per year"
+]
+
+
+def question_requests_time_grain(question: str) -> bool:
+    q = (question or "").lower()
+    return any(keyword in q for keyword in TIME_GRAIN_KEYWORDS)
+
+
+def has_temporal_grouping(sql: str) -> bool:
+    sql_lower = (sql or "").lower()
+    temporal_patterns = [
+        r"\bdate_trunc\s*\(",
+        r"\bextract\s*\(",
+        r"\bstrftime\s*\(",
+        r"\bgroup\s+by\b[^;]*(pickup_datetime|dropoff_datetime|request_datetime|on_scene_datetime|\bmonth\b|\bday\b|\bhour\b|\bdate\b)",
+        r"\border\s+by\b[^;]*(pickup_datetime|dropoff_datetime|request_datetime|on_scene_datetime|\bmonth\b|\bday\b|\bhour\b|\bdate\b)",
+    ]
+    return any(re.search(pattern, sql_lower, re.IGNORECASE) for pattern in temporal_patterns)
 
 
 def run_sql(conn: duckdb.DuckDBPyConnection, sql: str, limit: int = 200) -> List[Dict[str, Any]]:
@@ -75,6 +103,10 @@ Rules:
 - If asked for "most expensive", "costliest", or "highest fare", rank by total_price DESC (fallback base_passenger_fare DESC if needed) and return top row(s).
 - Include a time filter within 2023-01-01..2023-03-31; if none specified, default to 2023-01-01..2023-01-03.
 - Use pickup_datetime for time filters unless the question explicitly asks for another column.
+- Choose aggregation grain based on question intent:
+  * If the question asks for trend/time evolution (e.g., over time, monthly, daily, hourly), include time bucketing.
+  * If the question does NOT explicitly ask for time granularity, do NOT add month/day/hour/date in SELECT/GROUP BY.
+  * For comparison questions like "... by company", return one row per company across the filtered period.
 - For time-based aggregations (grouping by time periods), create a proper date column:
   * Use DATE_TRUNC('month', pickup_datetime) AS month for monthly grouping
   * Use DATE_TRUNC('day', pickup_datetime) AS date for daily grouping
@@ -336,17 +368,18 @@ async def call_ollama(prompt: str, model: str, timeout: float) -> str:
                 if merged:
                     return merged
 
-                # Optional debug trace to inspect response shape without dumping full payload by default
+                output_types = [item.get("type") for item in data.get("output", [])]
+                finish_reason = data.get("finish_reason")
+                usage = data.get("usage")
                 if os.getenv("LLM_DEBUG_RESPONSES", "false").lower() == "true":
-                    output_types = [item.get("type") for item in data.get("output", [])]
                     print(
                         f"[OPENAI DEBUG] empty output for model={openai_model}, "
                         f"status={data.get('status')}, output_types={output_types}, "
-                        f"finish_reason={data.get('finish_reason')}, usage={data.get('usage')}"
+                        f"finish_reason={finish_reason}, usage={usage}"
                     )
-
                 raise RuntimeError(
-                    f"OpenAI returned empty output (model={openai_model}, status={data.get('status')})"
+                    f"OpenAI returned empty output (model={openai_model}, status={data.get('status')}, "
+                    f"finish_reason={finish_reason}, output_types={output_types}, usage={usage})"
                 )
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 429:
@@ -418,17 +451,22 @@ async def generate_sql_with_validation(question: str, model: str, timeout: float
             try:
                 sql_raw = await call_ollama(prompt, model=model, timeout=timeout)
             except Exception as e:
-                error_msg = str(e)
+                error_msg = str(e).strip() or repr(e)
+                provider = os.getenv("LLM_PROVIDER", "ollama").lower()
                 if verbose:
                     print(f"❌ LLM call failed: {error_msg}")
-                    if "connection" in error_msg.lower() or "refused" in error_msg.lower():
-                        print("   → Make sure Ollama is running: `ollama serve`")
-                        print(f"   → Check model is pulled: `ollama list` (should see {model})")
+                    if "connection" in error_msg.lower() or "refused" in error_msg.lower() or "connect" in error_msg.lower():
+                        if provider == "ollama":
+                            print("   → Make sure Ollama is running: `ollama serve`")
+                            print(f"   → Check model is pulled: `ollama list` (should see {model})")
+                        else:
+                            print("   → Check API key/provider settings in .env")
+                            print("   → Check internet connectivity and provider status")
                 last_attempt = {"sql": sql, "errors": [f"LLM call failed: {error_msg}"]}
                 if attempt == max_attempts:
                     # If it's a connection error, raise it so caller can handle it
-                    if "connection" in error_msg.lower() or "refused" in error_msg.lower():
-                        raise ConnectionError(f"Cannot connect to Ollama: {error_msg}")
+                    if "connection" in error_msg.lower() or "refused" in error_msg.lower() or "connect" in error_msg.lower():
+                        raise ConnectionError(f"Cannot connect to configured provider ({provider}): {error_msg}")
                     return sql  # Return last attempt if any
                 continue
             
@@ -457,6 +495,17 @@ async def generate_sql_with_validation(question: str, model: str, timeout: float
                 print(f"\n[VALIDATING SQL...]")
             is_valid, errors = validate_sql(sql, conn)
             execution_error = None
+
+            # Guard against over-granular time grouping when question does not ask for trends.
+            if is_valid and has_temporal_grouping(sql) and not question_requests_time_grain(question):
+                is_valid = False
+                errors = [
+                    "Unrequested temporal grouping: query uses month/day/hour/date grouping, "
+                    "but the question does not ask for a time trend. Use overall aggregation "
+                    "at the requested grain (e.g., by company only)."
+                ]
+                if verbose:
+                    print("❌ Grain mismatch: temporal grouping added without time intent in question")
             
             if is_valid:
                 # Try to execute to catch runtime errors
